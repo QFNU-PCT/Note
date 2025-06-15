@@ -1,50 +1,50 @@
-name: 在12点半至22点期间自动关闭提交PR
+name: PR Time Window Status Check
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 jobs:
-  close-pr-in-window:
+  pr-time-window-check:
     runs-on: ubuntu-latest
     permissions:
-      issues: write
-      pull-requests: write
+      statuses: write
+      pull-requests: read
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Determine if we're in the restricted window
+      - name: Check if current time is in restricted window
         id: timecheck
         run: |
           now_utc=$(date -u +"%H:%M")
           weekday=$(date -u +"%u")   # 1=Mon ... 7=Sun
           start="04:30"  # UTC time for Beijing Sunday 12:30
           end="14:00"    # UTC time for Beijing Sunday 22:00
+          echo "Current UTC time: $now_utc"
           in_window=false
           if [ "$weekday" -eq "7" ] && [[ "$now_utc" > "$start" && "$now_utc" < "$end" ]]; then
             in_window=true
           fi
           echo "in_window=$in_window" >> $GITHUB_OUTPUT
 
-      - name: Close PR if in restricted window
-        if: steps.timecheck.outputs.in_window == 'true'
+      - name: Set PR status check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.number }}
         run: |
-          echo "Pull Request #$PR_NUMBER opened during disabled window – closing it."
-          curl -s -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
-            -d '{"body": "⚠️ 当前时间为北京时间周日 12:30–22:00，PR 提交暂时被禁止。"}'
+          in_window="${{ steps.timecheck.outputs.in_window }}"
+          conclusion="success"
+          description="PR 合规提交时间 ✅"
 
-          curl -s -X PATCH \
+          if [ "$in_window" = "true" ]; then
+            conclusion="failure"
+            description="❌ 当前为禁止提交 PR 的时间窗口（北京时间周日 12:30–22:00）"
+          fi
+
+          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" \
-            -d '{"state":"closed"}'
+            -f state="$conclusion" \
+            -f context="PR Time Window Check" \
+            -f description="$description"
