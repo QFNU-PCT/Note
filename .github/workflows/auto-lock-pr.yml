@@ -1,82 +1,50 @@
-name: 限制时间段禁止合并 PR
+name: 在12点半至22点期间自动关闭提交PR
 
-# 触发工作流的事件
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
-
-# 为工作流设置默认权限，checks:write 是创建状态检查所必需的
-permissions:
-  checks: write
+    types: [opened]
+  workflow_dispatch:
 
 jobs:
-  block-merge-in-window:
+  close-pr-in-window:
     runs-on: ubuntu-latest
-    name: 'Block Merge Window Check'
+    permissions:
+      issues: write
+      pull-requests: write
 
     steps:
-      # 步骤 1: 检查当前是否在允许的时间窗口内
-      - name: 'Check current time window'
-        id: time_check
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine if we're in the restricted window
+        id: timecheck
         run: |
           now_utc=$(date -u +"%H:%M")
-          weekday=$(date -u +"%u")  # 1=星期一 ... 7=星期日
-          
-          # 设置允许合并的时间窗口 (UTC 时间)
-          # 北京时间周日 12:30 对应 UTC 周日 04:30
-          # 北京时间周日 22:00 对应 UTC 周日 14:00
-          start="04:30"
-          end="14:00"
-
+          weekday=$(date -u +"%u")   # 1=Mon ... 7=Sun
+          start="04:30"  # UTC time for Beijing Sunday 12:30
+          end="14:00"    # UTC time for Beijing Sunday 22:00
           in_window=false
           if [ "$weekday" -eq "7" ] && [[ "$now_utc" > "$start" && "$now_utc" < "$end" ]]; then
             in_window=true
           fi
-          
-          echo "Current UTC time: $now_utc on weekday $weekday"
-          echo "Is in merge window: $in_window"
-          
-          # 将结果作为输出，供后续步骤使用
           echo "in_window=$in_window" >> $GITHUB_OUTPUT
 
-      # 步骤 2: 如果在时间窗口内，则创建“成功”状态
-      - name: 'Allow Merge (In Window)'
-        if: steps.time_check.outputs.in_window == 'true'
-        uses: actions/github-script@v7
-        with:
-          # ✅ 修正点：为“成功”状态的步骤提供 token
-          github-token: ${{ secrets.ORG_TOKEN }}
-          script: |
-            await github.rest.checks.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              name: "Merge Window Check",
-              head_sha: context.payload.pull_request.head.sha,
-              status: "completed",
-              conclusion: "success",
-              output: {
-                title: "✅ 允许合并",
-                summary: "当前时间在允许合并的时间窗口内。"
-              }
-            });
+      - name: Close PR if in restricted window
+        if: steps.timecheck.outputs.in_window == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          echo "Pull Request #$PR_NUMBER opened during disabled window – closing it."
+          curl -s -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
+            -d '{"body": "⚠️ 当前时间为北京时间周日 12:30–22:00，PR 提交暂时被禁止。"}'
 
-      # 步骤 3: 如果不在时间窗口内，则创建“失败”状态
-      - name: 'Block Merge (Outside Window)'
-        if: steps.time_check.outputs.in_window == 'false'
-        uses: actions/github-script@v7
-        with:
-          # ✅ 修正点：为“失败”状态的步骤同样提供 token
-          github-token: ${{ secrets.ORG_TOKEN }}
-          script: |
-            await github.rest.checks.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              name: "Merge Window Check",
-              head_sha: context.payload.pull_request.head.sha,
-              status: "completed",
-              conclusion: "failure",
-              output: {
-                title: "❌ 禁止合并",
-                summary: "当前时间不在允许合并的时间窗口内 (UTC 周日 04:30 - 14:00)。"
-              }
-            });
+          curl -s -X PATCH \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" \
+            -d '{"state":"closed"}'
