@@ -7,73 +7,85 @@ on:
 jobs:
   track_inactive:
     runs-on: ubuntu-latest
+    # 修正权限声明 [2,3](@ref)
     permissions:
-      contents: write  # 必须声明以写入文件
+      contents: write
       issues: read
-      members: read
+      organization: read  # 正确权限声明
+
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Fetch Organization Members with Emails
+      - name: Fetch Organization Members
         id: get-members
         env:
-          ORG: "QFNU-PCT"  # 替换为组织名称
+          ORG: "QFNU-PCT"
         run: |
-          # 获取成员列表（含邮箱，需权限）
+          # 获取组织成员登录名（带分页）
           page=1
-          all_members=""
+          all_logins=""
           while true; do
-            response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/orgs/$ORG/members?per_page=100&page=$page")
-            emails=$(echo "$response" | jq -r '.[] | .login + "," + .email')
+            logins=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/orgs/$ORG/members?per_page=100&page=$page" | jq -r '.[].login')
             
-            if [ -z "$emails" ]; then
+            if [ -z "$logins" ]; then
               break
             fi
             
-            all_members="${all_members}${emails}\n"
+            all_logins="${all_logins}$(echo "$logins" | tr '\n' ',')\n"
             ((page++))
           done
-          # 保存为临时文件供后续步骤使用
-          echo -e "$all_members" > members.csv
+          echo -e "${all_logins%??}" > logins.txt  # 移除末尾多余的换行和逗号
+          echo "logins_file=logins.txt" >> $GITHUB_OUTPUT
+
+      - name: Get Member Emails
+        id: get-emails
+        run: |
+          # 批量获取邮箱（处理速率限制）
+          while read username; do
+            if [ -n "$username" ]; then
+              email=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/users/$username" | jq -r '.email // empty')
+              echo "$username,$email" >> members.csv
+              sleep 0.5  # 避免API限流
+            fi
+          done < ${{ steps.get-members.outputs.logins_file }}
           echo "members_file=members.csv" >> $GITHUB_OUTPUT
 
       - name: Get Weekly Issue Contributors
         id: fetch-issues
         env:
-          REPO: "QFNU-PCT/Note"  # 替换为目标仓库
+          REPO: "QFNU-PCT/Note"
         run: |
           since_date=$(date -d "last monday" +%Y-%m-%dT00:00:00Z)
           contributors=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/$REPO/issues?since=$since_date&state=all" \
+            "https://api.github.com/repos/$REPO/issues?since=$since_date&state=all&per_page=100" \
             | jq -r '.[].user.login' | sort | uniq | tr '\n' ',')
           echo "contributors=${contributors%,}" >> $GITHUB_OUTPUT
 
       - name: Generate Inactive Member List
         id: generate-list
         run: |
-          # 读取成员邮箱文件
-          awk -F, '{print $1}' ${{ steps.get-members.outputs.members_file }} > logins.txt
+          # 生成CSV文件（带表头）[6,8](@ref)
+          echo "username,email" > inactive_members.csv
           # 对比活跃成员
-          inactive_logins=$(comm -23 \
-            <(sort logins.txt) \
-            <(echo "${{ steps.fetch-issues.outputs.contributors }}" | tr ',' '\n' | sort))
-          # 提取邮箱并生成CSV
-          grep -Ff <(echo "$inactive_logins") ${{ steps.get-members.outputs.members_file }} > inactive_members.csv
-          echo "inactive_count=$(wc -l < inactive_members.csv)" >> $GITHUB_OUTPUT
+          grep -Fvf <(echo "${{ steps.fetch-issues.outputs.contributors }}" | tr ',' '\n' | sort) \
+            ${{ steps.get-members.outputs.members_file }} >> inactive_members.csv
+          echo "inactive_count=$(($(wc -l < inactive_members.csv)-1))" >> $GITHUB_OUTPUT
 
-      - name: Commit Inactive List to Repo
+      - name: Commit Report to Repo
         if: ${{ steps.generate-list.outputs.inactive_count > 0 }}
         run: |
-          # 设置Git身份
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          # 移动文件到指定目录（按日期组织）
           target_dir="inactive_reports/$(date +%Y-%m-%d)"
           mkdir -p $target_dir
           mv inactive_members.csv "$target_dir/inactive_members.csv"
-          # 提交并推送
+          
+          # 避免推送冲突 [1](@ref)
+          git pull --rebase origin main
           git add "$target_dir"
-          git commit -m "Add inactive members report for $(date +%Y-%m-%d)"
+          git commit -m "Add weekly report $(date +%F)"
           git push origin main
