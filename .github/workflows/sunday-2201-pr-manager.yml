@@ -80,14 +80,7 @@ jobs:
             git checkout -b $branch
 
             # 覆盖写入 template.md，保证文件变化
-            cat > template.md <<EOF
----
-title: 
-date: 
-categories: note
-tags: 
----
-EOF
+            echo -e "---\ntitle: \ndate: \ncategories: note\ntags: \n---" > template.md
 
             git add template.md
             git commit -m "chore: 添加 template.md 给成员 $member"
