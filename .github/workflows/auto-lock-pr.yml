@@ -9,8 +9,8 @@ jobs:
   pr-time-window-check:
     runs-on: ubuntu-latest
     permissions:
+      pull-requests: write
       statuses: write
-      pull-requests: read
 
     steps:
       - name: Checkout repository
@@ -23,7 +23,7 @@ jobs:
           weekday=$(date -u +"%u")   # 1=Mon ... 7=Sun
           start="04:30"  # UTC time for Beijing Sunday 12:30
           end="14:00"    # UTC time for Beijing Sunday 22:00
-          echo "Current UTC time: $now_utc"
+          echo "Current UTC time: $now_utc (weekday $weekday)"
           in_window=false
           if [ "$weekday" -eq "7" ] && [[ "$now_utc" > "$start" && "$now_utc" < "$end" ]]; then
             in_window=true
@@ -36,15 +36,36 @@ jobs:
         run: |
           in_window="${{ steps.timecheck.outputs.in_window }}"
           conclusion="success"
-          description="PR 合规提交时间 ✅"
+          description="✅ PR 合规提交时间"
 
           if [ "$in_window" = "true" ]; then
             conclusion="failure"
             description="❌ 当前为禁止提交 PR 的时间窗口（北京时间周日 12:30–22:00）"
           fi
 
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          sha="${{ github.event.pull_request.head.sha }}"
+          repo="${{ github.repository }}"
+
+          curl -s -X POST "https://api.github.com/repos/$repo/statuses/$sha" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -f state="$conclusion" \
-            -f context="PR Time Window Check" \
-            -f description="$description"
+            -H "Accept: application/vnd.github.v3+json" \
+            -d @- <<EOF
+{
+  "state": "$conclusion",
+  "context": "PR Time Window Check",
+  "description": "$description"
+}
+EOF
+
+      - name: Comment on PR if in restricted time window
+        if: steps.timecheck.outputs.in_window == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
+            -d '{"body": "⚠️ 当前为北京时间周日 12:30–22:00，此时间段不允许提交 PR，PR 合并将被阻止。"}'
