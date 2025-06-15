@@ -85,14 +85,22 @@ jobs:
           echo "inactive_count=$(($(wc -l < inactive_members.csv)-1))" >> $GITHUB_OUTPUT
 
       - name: Commit Report to Repo
-        if: ${{ steps.generate-list.outputs.inactive_count >= 0 }}
+        if: ${{ steps.generate-list.outputs.inactive_count > 0 }}
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           target_dir="inactive_reports/$(date +%F)"
-          mkdir -p $target_dir
+          mkdir -p "$target_dir"
           mv inactive_members.csv "$target_dir/inactive_members.csv"
+
+          # 清理中间文件，避免它们阻塞提交
+          rm -f logins.txt members.csv
+
+          # 避免冲突
           git pull --rebase origin main
+
+          # 只 add 我们真正想提交的报告目录
           git add "$target_dir"
+
           git commit -m "Add weekly report $(date +%F)"
           git push origin main
