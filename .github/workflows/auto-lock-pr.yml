@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read  # 最低权限即可
+  contents: read  # 根据你 token 权限调整
 
 jobs:
   block-merge-in-window:
@@ -18,15 +18,15 @@ jobs:
         run: |
           now_utc=$(date -u +"%H:%M")
           weekday=$(date -u +"%u")  # 1=Mon ... 7=Sun
-          start="04:30"            # UTC 时间：北京时间周日 12:30
-          end="14:00"              # UTC 时间：北京时间周日 22:00
+          start="04:30"            # UTC 对应北京时间周日12:30
+          end="14:00"              # UTC 对应北京时间周日22:00
           in_window=false
           if [ "$weekday" -eq "7" ] && [[ "$now_utc" > "$start" && "$now_utc" < "$end" ]]; then
             in_window=true
           fi
           echo "in_window=$in_window" >> $GITHUB_OUTPUT
 
-      - name: 禁止合并：创建失败状态检查（使用 ORG_TOKEN）
+      - name: 禁止合并：创建失败状态检查
         if: steps.timecheck.outputs.in_window == 'true'
         uses: actions/github-script@v6
         with:
