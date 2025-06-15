@@ -1,0 +1,37 @@
+name: Enable PR Submissions
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每周周日北京时间22:01 -> UTC 14:01
+    - cron: '1 14 * * 0'
+
+permissions:
+  contents: write
+
+jobs:
+  enable-pr:
+    runs-on: ubuntu-latest
+    env:
+      REPO: QFNU-PCT/Note
+      TOKEN: ${{ secrets.ORG_TOKEN }}
+
+    steps:
+      - name: Setup git config
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Clone repository
+        run: |
+          git clone https://x-access-token:${TOKEN}@github.com/${REPO}.git repo
+
+      - name: Enable PR submissions (allow PRs)
+        run: |
+          cd repo
+          mkdir -p .github/ISSUE_TEMPLATE
+          echo "blank_issues_enabled: true" > .github/ISSUE_TEMPLATE/config.yml
+          git add .github/ISSUE_TEMPLATE/config.yml
+          git diff --cached --quiet || git commit -m "✅ 允许 Pull Request 提交"
+          git push origin main
+          
