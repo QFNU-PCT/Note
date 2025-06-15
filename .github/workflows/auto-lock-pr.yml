@@ -1,77 +1,50 @@
-name: 限制时间段禁止合并 PR
+name: 在12点半至22点期间自动关闭提交PR
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened]
   workflow_dispatch:
 
-permissions:
-  contents: read  # 最低权限即可
-
 jobs:
-  block-merge-in-window:
+  close-pr-in-window:
     runs-on: ubuntu-latest
-    env:
-      TOKEN: ${{ secrets.ORG_TOKEN }}
+    permissions:
+      issues: write
+      pull-requests: write
 
     steps:
-      - name: 判断是否在禁止合并时间段（北京时间周日 12:30–22:00）
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine if we're in the restricted window
         id: timecheck
         run: |
           now_utc=$(date -u +"%H:%M")
-          weekday=$(date -u +"%u")  # 1=Mon ... 7=Sun
-          start="04:30"            # UTC 时间：北京时间周日 12:30
-          end="14:00"              # UTC 时间：北京时间周日 22:00
+          weekday=$(date -u +"%u")   # 1=Mon ... 7=Sun
+          start="04:30"  # UTC time for Beijing Sunday 12:30
+          end="14:00"    # UTC time for Beijing Sunday 22:00
           in_window=false
           if [ "$weekday" -eq "7" ] && [[ "$now_utc" > "$start" && "$now_utc" < "$end" ]]; then
             in_window=true
           fi
           echo "in_window=$in_window" >> $GITHUB_OUTPUT
 
-      - name: 禁止合并：创建失败状态检查（使用 ORG_TOKEN）
+      - name: Close PR if in restricted window
         if: steps.timecheck.outputs.in_window == 'true'
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ env.TOKEN }}
-          script: |
-            const pr = context.payload.pull_request;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const sha = pr.head.sha;
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          echo "Pull Request #$PR_NUMBER opened during disabled window – closing it."
+          curl -s -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
+            -d '{"body": "⚠️ 当前时间为北京时间周日 12:30–22:00，PR 提交暂时被禁止。"}'
 
-            await github.rest.checks.create({
-              owner,
-              repo,
-              name: "Merge Block Check",
-              head_sha: sha,
-              status: "completed",
-              conclusion: "failure",
-              output: {
-                title: "禁止合并",
-                summary: "当前为北京时间周日 12:30–22:00，禁止合并此 PR。请在允许时间后再试。"
-              }
-            });
-
-      - name: 允许合并：创建成功状态检查
-        if: steps.timecheck.outputs.in_window != 'true'
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ env.TOKEN }}
-          script: |
-            const pr = context.payload.pull_request;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const sha = pr.head.sha;
-
-            await github.rest.checks.create({
-              owner,
-              repo,
-              name: "Merge Block Check",
-              head_sha: sha,
-              status: "completed",
-              conclusion: "success",
-              output: {
-                title: "允许合并",
-                summary: "当前时间允许合并此 PR。"
-              }
-            });
+          curl -s -X PATCH \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" \
+            -d '{"state":"closed"}'
