@@ -1,0 +1,70 @@
+name: 💤 Weekly Inactive Member Issue
+
+on:
+  schedule:
+    # 北京时间周日 12:30 = UTC 周日 04:30
+    - cron: '30 4 * * SUN'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  post_inactive_issue:
+    runs-on: ubuntu-latest
+    env:
+      ORG: QFNU-PCT
+      REPO: QFNU-PCT/Note
+      TOKEN: ${{ secrets.ORG_TOKEN }}
+
+    steps:
+      - name: 🛠️ Fetch organization members
+        run: |
+          page=1
+          > logins.txt
+          while true; do
+            logins=$(curl -s \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/orgs/$ORG/members?per_page=100&page=$page" \
+              | jq -r '.[].login')
+            [ -z "$logins" ] && break
+            echo "$logins" >> logins.txt
+            ((page++))
+          done
+
+      - name: 📨 Fetch this week's issue contributors
+        run: |
+          since_date=$(date -d "last monday" +%Y-%m-%dT00:00:00Z)
+          curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/issues?since=$since_date&state=all&per_page=100" \
+            | jq -r '.[].user.login' \
+            | sort -u > active.txt
+
+      - name: 📝 Compute inactive members
+        run: |
+          # list members not in active.txt
+          grep -Fvx -f active.txt logins.txt > inactive_users.txt || true
+
+      - name: 📄 Create issue with inactive list
+        run: |
+          inactive_count=$(wc -l < inactive_users.txt)
+          if [ "$inactive_count" -eq 0 ]; then
+            echo "All members have submitted; skipping issue creation."
+            exit 0
+          fi
+
+          title="Inactive members as of $(date +%F)"
+          body="The following $inactive_count member(s) have not submitted an issue this week:\n\n"
+          while read user; do
+            body+="- @${user}\n"
+          done < inactive_users.txt
+
+          # create the issue
+          curl -s -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/$REPO/issues \
+            -d "$(jq -Rc --arg t "$title" --arg b "$body" '{title:$t, body:$b}')"
