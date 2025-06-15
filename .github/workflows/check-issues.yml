@@ -38,6 +38,8 @@ jobs:
 
       - name: Get Member Emails
         id: get-emails
+        env:
+          TOKEN: ${{ secrets.ORG_TOKEN }}        # ← 新增这一行
         run: |
           > members.csv
           echo "username,email" >> members.csv
@@ -72,8 +74,14 @@ jobs:
         id: generate-list
         run: |
           echo "username,email" > inactive_members.csv
-          grep -Fvf <(echo "${{ steps.fetch-issues.outputs.contributors }}" | tr ',' '\n' | sort) \
-            ${{ steps.get-members.outputs.members_file }} >> inactive_members.csv
+          if [ -n "${{ steps.fetch-issues.outputs.contributors }}" ]; then
+            # 如果有活跃成员，就把他们过滤掉
+            grep -Fvf <(echo "${{ steps.fetch-issues.outputs.contributors }}" | tr ',' '\n' | sort) \
+              ${{ steps.get-members.outputs.members_file }} >> inactive_members.csv
+          else
+            # 如果没有活跃成员，所有成员都算未提交
+            tail -n +2 ${{ steps.get-members.outputs.members_file }} >> inactive_members.csv
+          fi
           echo "inactive_count=$(($(wc -l < inactive_members.csv)-1))" >> $GITHUB_OUTPUT
 
       - name: Commit Report to Repo
