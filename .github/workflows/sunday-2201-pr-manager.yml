@@ -11,7 +11,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  reset-and-create-prs:
+  reset-prs:
     runs-on: ubuntu-latest
     env:
       ORG: QFNU-PCT
@@ -56,58 +56,3 @@ jobs:
             echo "$logins" >> members.txt
             ((page++))
           done
-
-      - name: Create PR for each member by copying template.md
-        run: |
-          cd repo
-          while read member; do
-            echo "Creating PR for member: $member"
-
-            branch="member-pr-$member-$(date +%F)"
-
-            git checkout main
-            git pull origin main
-            git checkout -b $branch
-
-            # 覆盖写入 template.md，保证文件变化
-            echo -e "---\ntitle: \ndate: \ncategories: note\ntags: \n---" > template.md
-
-            git add template.md
-            git commit -m "chore: 添加 template.md 给成员 $member"
-
-            git fetch origin $branch || true
-
-            if git show-ref --verify --quiet refs/remotes/origin/$branch; then
-              if ! git rebase origin/$branch; then
-                echo "Rebase 失败，放弃该成员 PR 创建"
-                git rebase --abort
-                exit 1
-              fi
-            fi
-
-            git push -u origin $branch
-
-            pr_title="自动 PR - 会员同步: $member"
-            pr_body="这是为组织成员 $member 自动创建的 PR。"
-
-            # 创建 PR 并获取 PR 号
-            pr_response=$(curl -s -H "Authorization: Bearer $TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              -d "{\"title\":\"$pr_title\",\"head\":\"$branch\",\"base\":\"main\",\"body\":\"$pr_body\"}" \
-              "https://api.github.com/repos/${REPO}/pulls")
-
-            pr_number=$(echo "$pr_response" | jq -r '.number')
-
-            if [ "$pr_number" != "null" ]; then
-              echo "添加标签到 PR #$pr_number"
-              curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-                -H "Accept: application/vnd.github.v3+json" \
-                -d '["Note"]' \
-                "https://api.github.com/repos/${REPO}/issues/$pr_number/labels"
-            else
-              echo "PR 创建失败，响应：$pr_response"
-            fi
-
-            git checkout main
-            git branch -D $branch
-          done < ../members.txt
