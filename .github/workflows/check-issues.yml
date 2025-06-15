@@ -1,17 +1,16 @@
 name: Weekly Inactive Member Tracker
 on:
   schedule:
-    - cron: '0 16 * * SUN'  # UTC周日16:00 = 北京时间周一00:00
+    - cron: '0 16 * * SUN'  # UTC 周日16:00 = 北京时间周一00:00
   workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: read
 
 jobs:
   track_inactive:
     runs-on: ubuntu-latest
-    # 修正权限声明 [2,3](@ref)
-    permissions:
-      contents: write
-      issues: read
-      organization: read  # 正确权限声明
 
     steps:
       - name: Checkout Repo
@@ -21,36 +20,35 @@ jobs:
         id: get-members
         env:
           ORG: "QFNU-PCT"
+          TOKEN: ${{ secrets.ORG_TOKEN }}
         run: |
-          # 获取组织成员登录名（带分页）
           page=1
-          all_logins=""
+          > logins.txt
           while true; do
-            logins=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            logins=$(curl -s \
+              -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/orgs/$ORG/members?per_page=100&page=$page" | jq -r '.[].login')
-            
-            if [ -z "$logins" ]; then
-              break
-            fi
-            
-            all_logins="${all_logins}$(echo "$logins" | tr '\n' ',')\n"
+              "https://api.github.com/orgs/$ORG/members?per_page=100&page=$page" \
+              | jq -r '.[].login')
+            [ -z "$logins" ] && break
+            echo "$logins" >> logins.txt
             ((page++))
           done
-          echo -e "${all_logins%??}" > logins.txt  # 移除末尾多余的换行和逗号
           echo "logins_file=logins.txt" >> $GITHUB_OUTPUT
 
       - name: Get Member Emails
         id: get-emails
         run: |
-          # 批量获取邮箱（处理速率限制）
+          > members.csv
+          echo "username,email" >> members.csv
           while read username; do
-            if [ -n "$username" ]; then
-              email=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                "https://api.github.com/users/$username" | jq -r '.email // empty')
-              echo "$username,$email" >> members.csv
-              sleep 0.5  # 避免API限流
-            fi
+            email=$(curl -s \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/users/$username" \
+              | jq -r '.email // empty')
+            echo "$username,$email" >> members.csv
+            sleep 0.5
           done < ${{ steps.get-members.outputs.logins_file }}
           echo "members_file=members.csv" >> $GITHUB_OUTPUT
 
@@ -58,19 +56,22 @@ jobs:
         id: fetch-issues
         env:
           REPO: "QFNU-PCT/Note"
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           since_date=$(date -d "last monday" +%Y-%m-%dT00:00:00Z)
-          contributors=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          contributors=$(curl -s \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/$REPO/issues?since=$since_date&state=all&per_page=100" \
-            | jq -r '.[].user.login' | sort | uniq | tr '\n' ',')
+            | jq -r '.[].user.login' \
+            | sort -u \
+            | tr '\n' ',')
           echo "contributors=${contributors%,}" >> $GITHUB_OUTPUT
 
       - name: Generate Inactive Member List
         id: generate-list
         run: |
-          # 生成CSV文件（带表头）[6,8](@ref)
           echo "username,email" > inactive_members.csv
-          # 对比活跃成员
           grep -Fvf <(echo "${{ steps.fetch-issues.outputs.contributors }}" | tr ',' '\n' | sort) \
             ${{ steps.get-members.outputs.members_file }} >> inactive_members.csv
           echo "inactive_count=$(($(wc -l < inactive_members.csv)-1))" >> $GITHUB_OUTPUT
@@ -80,11 +81,9 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          target_dir="inactive_reports/$(date +%Y-%m-%d)"
+          target_dir="inactive_reports/$(date +%F)"
           mkdir -p $target_dir
           mv inactive_members.csv "$target_dir/inactive_members.csv"
-          
-          # 避免推送冲突 [1](@ref)
           git pull --rebase origin main
           git add "$target_dir"
           git commit -m "Add weekly report $(date +%F)"
