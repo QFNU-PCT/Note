@@ -1,4 +1,4 @@
-name: Weekly Inactive Member Tracker
+name: 每周非活跃会员跟踪
 on:
   schedule:
     - cron: '0 16 * * SAT'  # UTC 周六16:00 = 北京时间周日00:00
