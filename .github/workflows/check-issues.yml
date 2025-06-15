@@ -1,7 +1,7 @@
 name: Weekly Inactive Member Tracker
 on:
   schedule:
-    - cron: '0 16 * * SUN'  # UTC 周日16:00 = 北京时间周一00:00
+    - cron: '0 16 * * SAT'  # UTC 周六16:00 = 北京时间周日00:00
   workflow_dispatch:
 
 permissions:
@@ -39,7 +39,7 @@ jobs:
       - name: Get Member Emails
         id: get-emails
         env:
-          TOKEN: ${{ secrets.ORG_TOKEN }}        # ← 新增这一行
+          TOKEN: ${{ secrets.ORG_TOKEN }}
         run: |
           > members.csv
           echo "username,email" >> members.csv
@@ -54,18 +54,20 @@ jobs:
           done < ${{ steps.get-members.outputs.logins_file }}
           echo "members_file=members.csv" >> $GITHUB_OUTPUT
 
-      - name: Get Weekly Issue Contributors
-        id: fetch-issues
+      - name: Get Weekly PR Contributors
+        id: fetch-prs
         env:
           REPO: "QFNU-PCT/Note"
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          since_date=$(date -d "last monday" +%Y-%m-%dT00:00:00Z)
+          # 计算一周前的日期（ISO 8601 格式）
+          since_date=$(date -d "7 days ago" +%Y-%m-%dT%H:%M:%SZ)
+          # 拉取最近一周内所有 issue（包括 PR），然后筛选出 pull_request 字段非空的条目
           contributors=$(curl -s \
             -H "Authorization: Bearer $TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/$REPO/issues?since=$since_date&state=all&per_page=100" \
-            | jq -r '.[].user.login' \
+            | jq -r 'map(select(.pull_request != null)) | .[].user.login' \
             | sort -u \
             | tr '\n' ',')
           echo "contributors=${contributors%,}" >> $GITHUB_OUTPUT
@@ -74,12 +76,12 @@ jobs:
         id: generate-list
         run: |
           echo "username,email" > inactive_members.csv
-          if [ -n "${{ steps.fetch-issues.outputs.contributors }}" ]; then
-            # 如果有活跃成员，就把他们过滤掉
-            grep -Fvf <(echo "${{ steps.fetch-issues.outputs.contributors }}" | tr ',' '\n' | sort) \
+          if [ -n "${{ steps.fetch-prs.outputs.contributors }}" ]; then
+            # 有活跃 PR 提交者，就把他们过滤掉
+            grep -Fvf <(echo "${{ steps.fetch-prs.outputs.contributors }}" | tr ',' '\n' | sort) \
               ${{ steps.get-members.outputs.members_file }} >> inactive_members.csv
           else
-            # 如果没有活跃成员，所有成员都算未提交
+            # 如果一周内无人提交 PR，所有成员都算未提交
             tail -n +2 ${{ steps.get-members.outputs.members_file }} >> inactive_members.csv
           fi
           echo "inactive_count=$(($(wc -l < inactive_members.csv)-1))" >> $GITHUB_OUTPUT
@@ -93,14 +95,10 @@ jobs:
           mkdir -p "$target_dir"
           mv inactive_members.csv "$target_dir/inactive_members.csv"
 
-          # 清理中间文件，避免它们阻塞提交
+          # 清理中间文件
           rm -f logins.txt members.csv
 
-          # 避免冲突
           git pull --rebase origin main
-
-          # 只 add 我们真正想提交的报告目录
           git add "$target_dir"
-
-          git commit -m "Add weekly report $(date +%F)"
+          git commit -m "Add weekly PR inactivity report $(date +%F)"
           git push origin main
