@@ -2,8 +2,6 @@ name: 允许提交PR
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '1 14 * * 0'  # 每周日 UTC 14:01，即北京时间22:01
 
 permissions:
   contents: write
