@@ -1,4 +1,4 @@
-name: Enable PR Submissions
+name: 允许提交PR
 
 on:
   workflow_dispatch:

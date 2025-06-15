@@ -1,4 +1,4 @@
-name: Sync Notes to Blog
+name: 将笔记同步到博客
 on:
   push:
     branches: [main]

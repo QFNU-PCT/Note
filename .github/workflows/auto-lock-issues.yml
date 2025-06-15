@@ -1,4 +1,4 @@
-name: 🚫 Auto-close PRs During Restricted Window
+name: 在12点半至22点期间自动关闭提交PR
 
 on:
   pull_request:

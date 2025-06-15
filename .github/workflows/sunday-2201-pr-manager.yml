@@ -1,4 +1,4 @@
-name: Weekly PR Reset and Creation
+name: 每周PR重置和创建
 
 on:
   schedule:
