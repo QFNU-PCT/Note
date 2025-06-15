@@ -1,0 +1,82 @@
+name: Merge Block Check
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - ready_for_review
+      - reopened
+  workflow_dispatch:
+
+permissions:
+  checks: write
+  pull-requests: write
+
+jobs:
+  block-merge-in-window:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Determine if we're in the restricted window
+        id: timecheck
+        run: |
+          now_utc=$(date -u +"%H:%M")
+          weekday=$(date -u +"%u")   # 1=Mon ... 7=Sun
+          start_hour=4
+          start_min=30
+          end_hour=14
+          end_min=0
+
+          now_hour=${now_utc:0:2}
+          now_min=${now_utc:3:2}
+
+          now_total=$((10#$now_hour * 60 + 10#$now_min))
+          start_total=$((start_hour * 60 + start_min))
+          end_total=$((end_hour * 60 + end_min))
+
+          in_window=false
+          if [ "$weekday" -eq 7 ] && [ "$now_total" -ge "$start_total" ] && [ "$now_total" -le "$end_total" ]; then
+            in_window=true
+          fi
+
+          echo "in_window=$in_window" >> $GITHUB_OUTPUT
+          echo "now_utc=$now_utc, weekday=$weekday"
+
+      - name: Create check run to block merge if in restricted window
+        if: steps.timecheck.outputs.in_window == 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: "Merge Block Check",
+              head_sha: context.payload.pull_request.head.sha,
+              status: "completed",
+              conclusion: "failure",
+              output: {
+                title: "禁止合并",
+                summary: "当前时间为北京时间周日 12:30–22:00，禁止合并此 PR。请在允许时间后再试。"
+              }
+            });
+
+      - name: Create check run to allow merge if not in restricted window
+        if: steps.timecheck.outputs.in_window != 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: "Merge Block Check",
+              head_sha: context.payload.pull_request.head.sha,
+              status: "completed",
+              conclusion: "success",
+              output: {
+                title: "允许合并",
+                summary: "当前时间允许合并此 PR。"
+              }
+            });
