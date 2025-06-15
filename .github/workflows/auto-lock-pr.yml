@@ -19,15 +19,15 @@ jobs:
         run: |
           now_utc=$(date -u +"%H:%M")
           weekday=$(date -u +"%u")  # 1=Mon, ..., 7=Sun
-          start="04:30"  # UTC == Beijing 12:30
-          end="14:00"    # UTC == Beijing 22:00
+          start="04:30"  # UTC == 北京时间周日12:30
+          end="14:00"    # UTC == 北京时间周日22:00
           in_window=false
           if [ "$weekday" -eq "7" ] && [[ "$now_utc" > "$start" && "$now_utc" < "$end" ]]; then
             in_window=true
           fi
           echo "in_window=$in_window" >> $GITHUB_OUTPUT
 
-      - name: 设置状态检查
+      - name: 设置 PR 合并状态检查
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.ORG_TOKEN }}
@@ -36,7 +36,6 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const sha = pr.head.sha;
-
             const inWindow = "${{ steps.timecheck.outputs.in_window }}" === "true";
 
             await github.rest.checks.create({
