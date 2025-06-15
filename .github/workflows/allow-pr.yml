@@ -3,8 +3,7 @@ name: 允许提交PR
 on:
   workflow_dispatch:
   schedule:
-    # 每周周日北京时间22:01 -> UTC 14:01
-    - cron: '1 14 * * 0'
+    - cron: '1 14 * * 0'  # 每周日 UTC 14:01，即北京时间22:01
 
 permissions:
   contents: write
@@ -26,12 +25,12 @@ jobs:
         run: |
           git clone https://x-access-token:${TOKEN}@github.com/${REPO}.git repo
 
-      - name: Enable PR submissions (allow PRs)
+      - name: Enable PR submissions
         run: |
           cd repo
-          mkdir -p .github/ISSUE_TEMPLATE
-          echo "blank_issues_enabled: true" > .github/ISSUE_TEMPLATE/config.yml
-          git add .github/ISSUE_TEMPLATE/config.yml
-          git diff --cached --quiet || git commit -m "✅ 允许 Pull Request 提交"
+          mkdir -p .github
+          echo "PRs are allowed now." > .github/PR_ALLOWED
+          git add .github/PR_ALLOWED
+          git diff --cached --quiet || git commit -m "✅ 启用 Pull Request 提交"
           git push origin main
-          
+
