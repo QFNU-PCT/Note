@@ -1,0 +1,79 @@
+name: Weekly Inactive Member Tracker
+on:
+  schedule:
+    - cron: '0 16 * * SUN'  # UTC周日16:00 = 北京时间周一00:00
+  workflow_dispatch:
+
+jobs:
+  track_inactive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 必须声明以写入文件
+      issues: read
+      members: read
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Fetch Organization Members with Emails
+        id: get-members
+        env:
+          ORG: "QFNU-PCT"  # 替换为组织名称
+        run: |
+          # 获取成员列表（含邮箱，需权限）
+          page=1
+          all_members=""
+          while true; do
+            response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/orgs/$ORG/members?per_page=100&page=$page")
+            emails=$(echo "$response" | jq -r '.[] | .login + "," + .email')
+            
+            if [ -z "$emails" ]; then
+              break
+            fi
+            
+            all_members="${all_members}${emails}\n"
+            ((page++))
+          done
+          # 保存为临时文件供后续步骤使用
+          echo -e "$all_members" > members.csv
+          echo "members_file=members.csv" >> $GITHUB_OUTPUT
+
+      - name: Get Weekly Issue Contributors
+        id: fetch-issues
+        env:
+          REPO: "QFNU-PCT/Note"  # 替换为目标仓库
+        run: |
+          since_date=$(date -d "last monday" +%Y-%m-%dT00:00:00Z)
+          contributors=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/$REPO/issues?since=$since_date&state=all" \
+            | jq -r '.[].user.login' | sort | uniq | tr '\n' ',')
+          echo "contributors=${contributors%,}" >> $GITHUB_OUTPUT
+
+      - name: Generate Inactive Member List
+        id: generate-list
+        run: |
+          # 读取成员邮箱文件
+          awk -F, '{print $1}' ${{ steps.get-members.outputs.members_file }} > logins.txt
+          # 对比活跃成员
+          inactive_logins=$(comm -23 \
+            <(sort logins.txt) \
+            <(echo "${{ steps.fetch-issues.outputs.contributors }}" | tr ',' '\n' | sort))
+          # 提取邮箱并生成CSV
+          grep -Ff <(echo "$inactive_logins") ${{ steps.get-members.outputs.members_file }} > inactive_members.csv
+          echo "inactive_count=$(wc -l < inactive_members.csv)" >> $GITHUB_OUTPUT
+
+      - name: Commit Inactive List to Repo
+        if: ${{ steps.generate-list.outputs.inactive_count > 0 }}
+        run: |
+          # 设置Git身份
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          # 移动文件到指定目录（按日期组织）
+          target_dir="inactive_reports/$(date +%Y-%m-%d)"
+          mkdir -p $target_dir
+          mv inactive_members.csv "$target_dir/inactive_members.csv"
+          # 提交并推送
+          git add "$target_dir"
+          git commit -m "Add inactive members report for $(date +%Y-%m-%d)"
+          git push origin main
