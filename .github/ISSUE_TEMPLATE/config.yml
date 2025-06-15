@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 提交入口已关闭
+    url: https://github.com/QFNU-PCT/Note
+    about: 每周任务窗口：周一 00:00 - 周日 12:30（北京时间），其余时间暂停 Issue。
