@@ -23,9 +23,12 @@ jobs:
           EOF
 
       - name: Commit Changes
+        env:
+          TOKEN: ${{ secrets.ORG_TOKEN }}
         run: |
-          git config user.name github-actions
-          git config user.email actions@github.com
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:${TOKEN}@github.com/QFNU-PCT/Note.git
           git add .github/ISSUE_TEMPLATE/config.yml
           git commit -m "🔒 自动关闭 Issue 提交窗口"
           git push origin main
