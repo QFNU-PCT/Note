@@ -1,16 +1,18 @@
-name: 🔁 Weekly PR Reset and Creation
+name: Weekly PR Reset and Creation
 
 on:
   schedule:
-    - cron: '1 14 * * SUN'  # 北京时间22:01 = UTC 14:01
+    # 每周周日北京时间22:01 -> UTC 14:01
+    - cron: '1 14 * * 0'
   workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
+  members: read
 
 jobs:
-  sunday_reset:
+  reset-and-create-prs:
     runs-on: ubuntu-latest
     env:
       ORG: QFNU-PCT
@@ -18,76 +20,90 @@ jobs:
       TOKEN: ${{ secrets.ORG_TOKEN }}
 
     steps:
-    - name: Enable PRs by restoring config
-      run: |
-        mkdir -p .github/ISSUE_TEMPLATE
-        echo "blank_issues_enabled: true" > .github/ISSUE_TEMPLATE/config.yml
+      - name: Setup git config
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
 
-        git config --global user.name "github-actions"
-        git config --global user.email "actions@github.com"
+      - name: Clone repository
+        run: |
+          git clone https://x-access-token:${TOKEN}@github.com/${REPO}.git repo
+        shell: bash
 
-        git init
-        git remote add origin https://x-access-token:${TOKEN}@github.com/$REPO.git
-        git pull origin main
+      - name: Enable PR submissions (allow PRs)
+        run: |
+          cd repo
+          mkdir -p .github/ISSUE_TEMPLATE
+          echo "blank_issues_enabled: true" > .github/ISSUE_TEMPLATE/config.yml
+          git add .github/ISSUE_TEMPLATE/config.yml
+          git diff --cached --quiet || git commit -m "✅ 允许 Pull Request 提交"
+          git push origin main
+        shell: bash
 
-        git add .github/ISSUE_TEMPLATE/config.yml
-        git commit -m "✅ 允许 Pull Request 提交" || echo "No config change"
-        git push origin main
-
-    - name: Close all open PRs
-      run: |
-        prs=$(curl -s -H "Authorization: Bearer $TOKEN" \
-          "https://api.github.com/repos/$REPO/pulls?state=open&per_page=100" \
-          | jq -r '.[].number')
-
-        for pr in $prs; do
-          echo "Closing PR #$pr"
-          curl -s -X PATCH \
-            -H "Authorization: Bearer $TOKEN" \
+      - name: Close all open PRs
+        run: |
+          prs=$(curl -s -H "Authorization: Bearer $TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/$REPO/pulls/$pr \
-            -d '{"state":"closed"}'
-        done
+            "https://api.github.com/repos/${REPO}/pulls?state=open&per_page=100" | jq -r '.[].number')
 
-    - name: Get all org members
-      run: |
-        page=1
-        > members.txt
-        while true; do
-          users=$(curl -s -H "Authorization: Bearer $TOKEN" \
-            "https://api.github.com/orgs/$ORG/members?per_page=100&page=$page" \
-            | jq -r '.[].login')
-          [ -z "$users" ] && break
-          echo "$users" >> members.txt
-          ((page++))
-        done
+          for pr in $prs; do
+            echo "Closing PR #$pr"
+            curl -X PATCH -s -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${REPO}/pulls/$pr" \
+              -d '{"state":"closed"}'
+          done
+        shell: bash
 
-    - name: Clone Repo & Push PRs for Each Member
-      run: |
-        git clone https://x-access-token:${TOKEN}@github.com/$REPO.git
-        cd Note
-        git config --global user.name "github-actions"
-        git config --global user.email "actions@github.com"
+      - name: Get organization members
+        id: get_members
+        run: |
+          page=1
+          > members.txt
+          while true; do
+            logins=$(curl -s -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/orgs/${ORG}/members?per_page=100&page=$page" \
+              | jq -r '.[].login')
+            if [ -z "$logins" ]; then
+              break
+            fi
+            echo "$logins" >> members.txt
+            ((page++))
+          done
+          echo "members_file=members.txt" >> $GITHUB_OUTPUT
 
-        while read user; do
-          branch="auto-pr-from-$user"
-          git checkout -b $branch
-          echo "This PR was created for @$user on $(date)" >> AUTO_PR_LOG.md
-          git add AUTO_PR_LOG.md
-          git commit -m "🤖 Weekly auto PR for @$user"
-          git push origin $branch
+      - name: Create PR for each member by copying template.md
+        run: |
+          cd repo
+          if [ ! -f template.md ]; then
+            echo "Error: template.md not found in repo root"
+            exit 1
+          fi
 
-          # Create the PR
-          curl -s -X POST \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/$REPO/pulls \
-            -d "$(jq -n \
-              --arg title "Weekly PR for @$user" \
-              --arg head "$branch" \
-              --arg base "main" \
-              '{title:$title, head:$head, base:$base, body:"自动 PR。请根据任务要求更新并提交。"}')"
+          while read member; do
+            echo "Creating PR for member: $member"
 
-          git checkout main
-          git branch -D $branch
-        done < ../members.txt
+            branch="member-pr-$member-$(date +%F)"
+            git checkout main
+            git pull origin main
+            git checkout -b $branch
+
+            cp ../template.md ./template.md
+            git add template.md
+            git commit -m "chore: 添加 template.md 给成员 $member"
+
+            git push -u origin $branch
+
+            pr_title="自动 PR - 会员同步: $member"
+            pr_body="这是为组织成员 $member 自动创建的 PR，内容是复制根目录的 template.md 文件。"
+
+            curl -s -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              -d "{\"title\":\"$pr_title\",\"head\":\"$branch\",\"base\":\"main\",\"body\":\"$pr_body\"}" \
+              "https://api.github.com/repos/${REPO}/pulls"
+
+            git checkout main
+            git branch -D $branch
+          done < ../${{ steps.get_members.outputs.members_file }}
+        shell: bash
