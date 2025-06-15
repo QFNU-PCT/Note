@@ -22,13 +22,14 @@ jobs:
               about: “每周任务窗口为 22:00 后开放，当前时间禁止提交 Issue。”
           EOF
 
-      - name: Commit Changes
-        env:
-          TOKEN: ${{ secrets.ORG_TOKEN }}
+      - name: Commit Changes with ORG_TOKEN
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git remote set-url origin https://x-access-token:${TOKEN}@github.com/QFNU-PCT/Note.git
+
+          git remote set-url origin https://x-access-token:${{ secrets.ORG_TOKEN }}@github.com/QFNU-PCT/Note.git
+
           git add .github/ISSUE_TEMPLATE/config.yml
           git commit -m "🔒 自动关闭 Issue 提交窗口"
           git push origin main
+
