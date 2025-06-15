@@ -1,4 +1,4 @@
-name: 💤 每周非活跃会员Issue
+name: 每周非活跃会员Issue
 
 on:
   schedule:
