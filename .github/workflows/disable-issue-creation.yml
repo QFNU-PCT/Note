@@ -1,0 +1,31 @@
+name: Disable Issue Creation
+
+on:
+  schedule:
+    - cron: '30 4 * * 0'  # UTC 周日 04:30 = 北京时间周日 12:30
+  workflow_dispatch:
+jobs:
+  lock-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Set Closed Issue Template
+        run: |
+          mkdir -p .github/ISSUE_TEMPLATE
+          cat > .github/ISSUE_TEMPLATE/config.yml <<EOF
+          blank_issues_enabled: false
+          contact_links:
+            - name: 🚫 暂停提交 Issue
+              url: https://github.com/QFNU-PCT/Note
+              about: “每周任务窗口为 22:00 后开放，当前时间禁止提交 Issue。”
+          EOF
+
+      - name: Commit Changes
+        run: |
+          git config user.name github-actions
+          git config user.email actions@github.com
+          git add .github/ISSUE_TEMPLATE/config.yml
+          git commit -m "🔒 自动关闭 Issue 提交窗口"
+          git push origin main
