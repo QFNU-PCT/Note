@@ -1,0 +1,44 @@
+name: Sync Notes to Blog
+on:
+  push:
+    branches: [main]
+    paths: ['Note/**']
+
+jobs:
+  sync-files:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 仅检出目标仓库（默认目录：当前工作区）
+      - name: Checkout Target Repo
+        uses: actions/checkout@v4
+        with:
+          repository: QFNU-PCT/QFNU-PCT.github.io
+          token: ${{ secrets.BLOG_ACCESS_TOKEN }}
+          # 不指定 path，直接使用工作区根目录
+
+      # 2. 下载源仓库的 Note 目录（无需检出整个仓库）
+      - name: Download Source Files
+        env:
+          SOURCE_REPO: "https://github.com/QFNU-PCT/Note"  # 替换为源仓库地址
+        run: |
+          # 通过 GitHub API 下载 Note 目录的压缩包
+          curl -L -H "Authorization: token ${{ secrets.BLOG_ACCESS_TOKEN }}" \
+            -o note-files.zip "${{ env.SOURCE_REPO }}/archive/main.zip?path=Note"
+          unzip -q note-files.zip "*/Note/*" -d temp-dir
+          # 移动文件到目标路径
+          mkdir -p source/_posts
+          cp -r temp-dir/*/Note/* source/_posts/
+          rm -rf note-files.zip temp-dir
+
+      # 3. 提交并推送变更
+      - name: Commit and Push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add source/_posts
+          if git diff-index --quiet HEAD --; then
+            echo "No changes detected."
+          else
+            git commit -m "Auto-sync notes from Note repo"
+            git push origin main
+          fi
