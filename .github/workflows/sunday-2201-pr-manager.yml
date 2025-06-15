@@ -71,6 +71,8 @@ jobs:
       - name: Create PR for each member by copying template.md
         run: |
           cd repo
+          echo "List Note folder:"
+          ls -l
           if [ ! -f Note/template.md ]; then
             echo "Error: Note/template.md not found!"
             exit 1
