@@ -1,0 +1,93 @@
+name: 🔁 Weekly PR Reset and Creation
+
+on:
+  schedule:
+    - cron: '1 14 * * SUN'  # 北京时间22:01 = UTC 14:01
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sunday_reset:
+    runs-on: ubuntu-latest
+    env:
+      ORG: QFNU-PCT
+      REPO: QFNU-PCT/Note
+      TOKEN: ${{ secrets.ORG_TOKEN }}
+
+    steps:
+    - name: Enable PRs by restoring config
+      run: |
+        mkdir -p .github/ISSUE_TEMPLATE
+        echo "blank_issues_enabled: true" > .github/ISSUE_TEMPLATE/config.yml
+
+        git config --global user.name "github-actions"
+        git config --global user.email "actions@github.com"
+
+        git init
+        git remote add origin https://x-access-token:${TOKEN}@github.com/$REPO.git
+        git pull origin main
+
+        git add .github/ISSUE_TEMPLATE/config.yml
+        git commit -m "✅ 允许 Pull Request 提交" || echo "No config change"
+        git push origin main
+
+    - name: Close all open PRs
+      run: |
+        prs=$(curl -s -H "Authorization: Bearer $TOKEN" \
+          "https://api.github.com/repos/$REPO/pulls?state=open&per_page=100" \
+          | jq -r '.[].number')
+
+        for pr in $prs; do
+          echo "Closing PR #$pr"
+          curl -s -X PATCH \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/$REPO/pulls/$pr \
+            -d '{"state":"closed"}'
+        done
+
+    - name: Get all org members
+      run: |
+        page=1
+        > members.txt
+        while true; do
+          users=$(curl -s -H "Authorization: Bearer $TOKEN" \
+            "https://api.github.com/orgs/$ORG/members?per_page=100&page=$page" \
+            | jq -r '.[].login')
+          [ -z "$users" ] && break
+          echo "$users" >> members.txt
+          ((page++))
+        done
+
+    - name: Clone Repo & Push PRs for Each Member
+      run: |
+        git clone https://x-access-token:${TOKEN}@github.com/$REPO.git
+        cd Note
+        git config --global user.name "github-actions"
+        git config --global user.email "actions@github.com"
+
+        while read user; do
+          branch="auto-pr-from-$user"
+          git checkout -b $branch
+          echo "This PR was created for @$user on $(date)" >> AUTO_PR_LOG.md
+          git add AUTO_PR_LOG.md
+          git commit -m "🤖 Weekly auto PR for @$user"
+          git push origin $branch
+
+          # Create the PR
+          curl -s -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/$REPO/pulls \
+            -d "$(jq -n \
+              --arg title "Weekly PR for @$user" \
+              --arg head "$branch" \
+              --arg base "main" \
+              '{title:$title, head:$head, base:$base, body:"自动 PR。请根据任务要求更新并提交。"}')"
+
+          git checkout main
+          git branch -D $branch
+        done < ../members.txt
