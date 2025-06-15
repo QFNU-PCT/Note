@@ -1,4 +1,3 @@
-# .github/workflows/allow-prs.yml
 name: 🟢 Allow Pull Requests
 
 on:
