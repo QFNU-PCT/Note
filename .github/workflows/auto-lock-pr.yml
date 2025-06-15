@@ -1,50 +1,57 @@
-name: 在12点半至22点期间自动关闭提交PR
+name: PR 时间窗合并限制
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize]
   workflow_dispatch:
 
 jobs:
-  close-pr-in-window:
+  block-merge-in-window:
     runs-on: ubuntu-latest
     permissions:
-      issues: write
+      contents: read
       pull-requests: write
+      checks: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Determine if we're in the restricted window
+      - name: 获取当前 UTC 时间和星期
         id: timecheck
         run: |
           now_utc=$(date -u +"%H:%M")
-          weekday=$(date -u +"%u")   # 1=Mon ... 7=Sun
-          start="04:30"  # UTC time for Beijing Sunday 12:30
-          end="14:00"    # UTC time for Beijing Sunday 22:00
+          weekday=$(date -u +"%u")  # 1=Mon, ..., 7=Sun
+          start="04:30"  # UTC == Beijing 12:30
+          end="14:00"    # UTC == Beijing 22:00
           in_window=false
           if [ "$weekday" -eq "7" ] && [[ "$now_utc" > "$start" && "$now_utc" < "$end" ]]; then
             in_window=true
           fi
           echo "in_window=$in_window" >> $GITHUB_OUTPUT
 
-      - name: Close PR if in restricted window
-        if: steps.timecheck.outputs.in_window == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.number }}
-        run: |
-          echo "Pull Request #$PR_NUMBER opened during disabled window – closing it."
-          curl -s -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
-            -d '{"body": "⚠️ 当前时间为北京时间周日 12:30–22:00，PR 提交暂时被禁止。"}'
+      - name: 设置状态检查
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.ORG_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sha = pr.head.sha;
 
-          curl -s -X PATCH \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" \
-            -d '{"state":"closed"}'
+            const inWindow = "${{ steps.timecheck.outputs.in_window }}" === "true";
+
+            await github.rest.checks.create({
+              owner,
+              repo,
+              name: "PR Merge Blocker",
+              head_sha: sha,
+              status: "completed",
+              conclusion: inWindow ? "failure" : "success",
+              output: {
+                title: inWindow
+                  ? "❌ 当前为禁止提交 PR 的时间窗口（北京时间周日 12:30–22:00）"
+                  : "✅ PR 合规提交时间",
+                summary: inWindow
+                  ? "本次 PR 提交时间违反团队规则，将被阻止合并。"
+                  : "提交时间符合规范，可以继续审查与合并。"
+              }
+            });
