@@ -1,40 +1,53 @@
-name: 🔒 Lock Issue Submission
+name: 🚫 Auto-close PRs During Restricted Window
 
 on:
-  schedule:
-    - cron: '30 4 * * SUN'  # UTC 04:30 = 北京时间周日 12:30
-  workflow_dispatch:
+  pull_request:
+    types: [opened]
 
 jobs:
-  lock_issue_submission:
+  close-pr-in-window:
     runs-on: ubuntu-latest
-
     permissions:
-      contents: write
-      issues: write
+      issues: write       # 用于发表评论
+      pull-requests: write  # 用于关闭 PR
 
     steps:
-      - name: ⬇️ Checkout repository with ORG_TOKEN
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.ORG_TOKEN }}
-
-      - name: 🛠️ Write issue config to disable issue submission
+      - name: Determine if we're in the restricted window
+        id: timecheck
         run: |
-          mkdir -p .github/ISSUE_TEMPLATE
-          cat > .github/ISSUE_TEMPLATE/config.yml <<EOF
-          blank_issues_enabled: false
-          contact_links:
-            - name: 🔒 提交入口已关闭
-              url: https://github.com/QFNU-PCT/Note
-              about: 每周任务窗口：周一 00:00 - 周日 12:30（北京时间），其余时间暂停 Issue。
-          EOF
+          # 获取 UTC 时间和星期几
+          now_utc=$(date -u +"%H:%M")
+          weekday=$(date -u +"%u")   # 1=Mon ... 7=Sun
 
-      - name: 📦 Commit & Push
+          # 计算窗口：北京时间周日 12:30–22:00 对应 UTC 周日 04:30–14:00
+          # 所以：weekday==7 且 now_utc 在 04:30–14:00 之间
+          start="04:30"; end="14:00"
+          in_window=false
+
+          if [ "$weekday" -eq "7" ] && [[ "$now_utc" > "$start" && "$now_utc" < "$end" ]]; then
+            in_window=true
+          fi
+
+          echo "in_window=$in_window" >> $GITHUB_OUTPUT
+
+      - name: Close PR if in restricted window
+        if: steps.timecheck.outputs.in_window == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.number }}
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "actions@github.com"
+          echo "Pull Request #$PR_NUMBER opened during disabled window – closing it."
+          # 1) 留一条评论说明原因
+          curl -s -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
+            -d '{"body": "⚠️ 当前时间为北京时间周日 12:30–22:00，Pull Request 提交暂时被禁止，请在 22:00 后再尝试。"}'
 
-          git add .github/ISSUE_TEMPLATE/config.yml
-          git commit -m "🔒 自动关闭 Issue 提交窗口" || echo "Nothing to commit"
-          git push origin HEAD:main
+          # 2) 关闭 PR
+          curl -s -X PATCH \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" \
+            -d '{"state":"closed"}'
