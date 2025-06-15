@@ -44,14 +44,14 @@ jobs:
             "https://api.github.com/repos/${REPO}/pulls?state=open&per_page=100" | jq -r '.[].number')
           for pr in $prs; do
             echo "Closing PR #$pr"
+            # 用 Issues API 关闭 PR（PR 是 Issue 的子集）
             curl -X PATCH -s -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${REPO}/pulls/$pr" \
+              "https://api.github.com/repos/${REPO}/issues/$pr" \
               -d '{"state":"closed"}'
           done
 
       - name: Get organization members
-        id: get_members
         run: |
           page=1
           > members.txt
@@ -66,12 +66,10 @@ jobs:
             echo "$logins" >> members.txt
             ((page++))
           done
-          echo "members_file=members.txt" >> $GITHUB_OUTPUT
 
       - name: Create PR for each member by copying template.md
         run: |
           cd repo
-
           while read member; do
             echo "Creating PR for member: $member"
 
@@ -81,9 +79,18 @@ jobs:
             git pull origin main
             git checkout -b $branch
 
+            # 覆盖写入 template.md，保证文件变化
+            cat > template.md <<EOF
+---
+title: 
+date: 
+categories: note
+tags: 
+---
+EOF
+
             git add template.md
             git commit -m "chore: 添加 template.md 给成员 $member"
-
             git push -u origin $branch
 
             pr_title="自动 PR - 会员同步: $member"
