@@ -69,10 +69,23 @@ jobs:
             git pull origin main
             git checkout -b $branch
 
+            # 覆盖写入 template.md，保证文件变化
             echo -e "---\ntitle: \ndate: \ncategories: note\ntags: \n---" > template.md
 
             git add template.md
             git commit -m "chore: 添加 template.md 给成员 $member"
+
+            # 先 fetch 远程分支，避免推送被拒绝
+            git fetch origin $branch || true
+
+            if git show-ref --verify --quiet refs/remotes/origin/$branch; then
+              if ! git rebase origin/$branch; then
+                echo "Rebase 失败，放弃该成员 PR 创建"
+                git rebase --abort
+                exit 1
+              fi
+            fi
+
             git push -u origin $branch
 
             pr_title="自动 PR - 会员同步: $member"
