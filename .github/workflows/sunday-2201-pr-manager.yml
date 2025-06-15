@@ -73,8 +73,8 @@ jobs:
           cd repo
           echo "List Note folder:"
           ls -l
-          if [ ! -f Note/template.md ]; then
-            echo "Error: Note/template.md not found!"
+          if [ ! -f template.md ]; then
+            echo "Error: template.md not found!"
             exit 1
           fi
 
@@ -87,7 +87,7 @@ jobs:
             git pull origin main
             git checkout -b $branch
 
-            cp Note/template.md ./template.md
+            cp template.md ./template.md
 
             git add template.md
             git commit -m "chore: 添加 template.md 给成员 $member"
@@ -95,7 +95,7 @@ jobs:
             git push -u origin $branch
 
             pr_title="自动 PR - 会员同步: $member"
-            pr_body="这是为组织成员 $member 自动创建的 PR，内容是复制仓库子目录 Note/template.md 到根目录的 template.md 文件。"
+            pr_body="这是为组织成员 $member 自动创建的 PR。"
 
             curl -s -H "Authorization: Bearer $TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
