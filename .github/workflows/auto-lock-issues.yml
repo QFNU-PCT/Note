@@ -3,6 +3,7 @@ name: 🚫 Auto-close PRs During Restricted Window
 on:
   pull_request:
     types: [opened]
+  workflow_dispatch:
 
 jobs:
   close-pr-in-window:
