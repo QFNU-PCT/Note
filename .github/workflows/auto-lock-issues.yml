@@ -1,0 +1,38 @@
+name: 🔒 Lock Issue Submission
+
+on:
+  schedule:
+    - cron: '30 4 * * SUN'  # UTC时间 04:30 = 北京时间 12:30
+  workflow_dispatch:
+
+jobs:
+  lock_issue_submission:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Write issue config to disable issue submission
+        run: |
+          mkdir -p .github/ISSUE_TEMPLATE
+          cat > .github/ISSUE_TEMPLATE/config.yml <<EOF
+          blank_issues_enabled: false
+          contact_links:
+            - name: 🔒 提交入口已关闭
+              url: https://github.com/QFNU-PCT/Note
+              about: 每周提交窗口为周一 00:00 - 周日 12:30（北京时间），其余时间不接受 Issue。
+          EOF
+
+      - name: 📦 Commit & Push using ORG_TOKEN
+        env:
+          PERSONAL_TOKEN: ${{ secrets.ORG_TOKEN }}
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+          git remote set-url origin https://x-access-token:${PERSONAL_TOKEN}@github.com/QFNU-PCT/Note.git
+
+          git add .github/ISSUE_TEMPLATE/config.yml
+          git commit -m "🔒 自动关闭 Issue 提交窗口" || echo "Nothing to commit"
+          git push origin main
